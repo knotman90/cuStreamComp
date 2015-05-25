@@ -19,13 +19,7 @@ namespace cuCompactor {
 __host__ __device__ int divup(int x, int y) { return x / y + (x % y ? 1 : 0); }
 
 __device__ __inline__ int pow2i (int e){
-	int res=1;
-#pragma unroll
-	for(;e>0;e--)
-		res*=2;
-
-	return res;
-
+	1<<e;
 }
 
 
