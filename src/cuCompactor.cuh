@@ -123,6 +123,5 @@ void compact(T* d_input,T* d_output,int length, Predicate predicate, int blockSi
 
 
 
-
 } /* namespace cuCompactor */
 #endif /* CUCOMPACTOR_H_ */
