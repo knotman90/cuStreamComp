@@ -2,6 +2,7 @@
 #include <assert.h>
 #include "cuCompactor.cuh"
 #include <chrono>
+#include <stdlib.h>
 using namespace std;
 
 
@@ -13,11 +14,15 @@ struct int_predicate
 		return x>0;
 	}
 };
+#define randBound (50)//<100
+void initiData(int *h_data, uint NELEMENTS,uint &goodElements,bool randomOrStride){
 
-void initiData(int *h_data, uint NELEMENTS,uint &goodElements){
 	ushort stride = 4;
 	for (int i = 0; i < NELEMENTS; ++i) {
-		h_data[i] = i%stride;
+		if(randomOrStride)
+			h_data[i] = i%stride;
+		else
+			h_data[i] =(rand()%100 <= randBound) ? 1 : 0;
 		if(h_data[i])
 			goodElements++;
 	}
@@ -51,11 +56,12 @@ uint blockSize=8;
 
 
 int main(){
+srand(time(0));
 	int *d_data, *d_output, *h_data;
 
 	//data elements from 2^5 to 2^29
 	for(int e=7;e<30;e++){
-	//blocksize from 32 to 1024
+		//blocksize from 32 to 1024
 		for(int b=5;b<=10;b++){
 
 			NELEMENTS=1<<e;
@@ -71,7 +77,7 @@ int main(){
 			cudaMalloc(&d_output,datasize);
 
 			cudaMemset(d_output,0,datasize);
-			initiData(h_data,NELEMENTS,NgoodElements);
+			initiData(h_data,NELEMENTS,NgoodElements,false);
 
 			//printData(h_data,NELEMENTS);
 
