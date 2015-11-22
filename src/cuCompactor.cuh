@@ -63,7 +63,7 @@ __global__ void compactK(T* d_input,int length, T* d_output,int* d_BlocksOffset,
 
 		if(w_i==0 && w_l<blockDim.x/warpSize){
 			int w_i_u=0;
-			for(int j=0;j<5;j++){
+			for(int j=0;j<=5;j++){
 				int b_j =__ballot( warpTotals[w_l] & pow2i(j) ); //# of the ones in the j'th digit of the warp offsets
 				w_i_u += (__popc(b_j & t_m)  ) << j;
 				//printf("indice %i t_m=%i,j=%i,b_j=%i,w_i_u=%i\n",w_l,t_m,j,b_j,w_i_u);
