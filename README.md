@@ -29,3 +29,7 @@ d_data, d_output have to be allocated on device.
 ```
 cuCompactor::compact<int>(d_data,d_output,length,predicate(),blockSize);
 ```
+
+*PERFORMANCE*
+
+![Alt text](/results/res.jpg?raw=true "Thrust Performance Comparison")
