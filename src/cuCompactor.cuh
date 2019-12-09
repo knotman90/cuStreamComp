@@ -53,7 +53,7 @@ __global__ void compactK(T* d_input,int length, T* d_output,int* d_BlocksOffset,
 		int t_m = FULL_MASK >> (warpSize-w_l); //thread mask
 		#if (CUDART_VERSION < 9000)
 		int b   = __ballot(pred) & t_m; //ballot result = number whose ith bit is one if the ith's thread pred is true masked up to the current index in warp
-        #else
+		#else
 		int b	= __ballot_sync(FULL_MASK,pred) & t_m;
 		#endif
 		int t_u	= __popc(b); // popc count the number of bit one. simply count the number predicated true BEFORE MY INDEX
@@ -72,9 +72,9 @@ __global__ void compactK(T* d_input,int length, T* d_output,int* d_BlocksOffset,
 		if(w_i==0 && w_l<numWarps){
 			int w_i_u=0;
 			for(int j=0;j<=5;j++){ // must include j=5 in loop in case any elements of warpTotals are identically equal to 32
-                #if (CUDART_VERSION < 9000)
-                int b_j =__ballot( warpTotals[w_l] & pow2i(j) ); //# of the ones in the j'th digit of the warp offsets
-                #else
+				#if (CUDART_VERSION < 9000)
+		                int b_j =__ballot( warpTotals[w_l] & pow2i(j) ); //# of the ones in the j'th digit of the warp offsets
+				#else
 				int b_j =__ballot_sync(numWarpsMask, warpTotals[w_l] & pow2i(j) );
 				#endif
 				w_i_u += (__popc(b_j & t_m)  ) << j;
