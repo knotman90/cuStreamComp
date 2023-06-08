@@ -264,32 +264,37 @@ int compact(T* d_input,T* d_output,int length, Predicate predicate, int blockSiz
 template <typename T,typename Predicate>
 int compactHybrid(T* d_input,T* d_output,int length, Predicate predicate, int blockSize){
 	int WARPS_PER_BLOCK = divup(blockSize,THREADS_PER_WARP);
-	//printf("WPB %d\n",WARPS_PER_BLOCK);
-	int numBlocks = divup(length,blockSize);
-	//printf("numBlocks %d\n",numBlocks);
-	int numWarps = numBlocks;
-	//printf("numWarps %d\n",numBlocks);
+
+	int numWarps = divup(length,THREADS_PER_WARP*THREADS_PER_WARP);
+	int numBlocks = divup(numWarps,WARPS_PER_BLOCK);
+	/*
+	printf("WARPS_PER_BLOCK %d\n",WARPS_PER_BLOCK);
+	printf("numElements %d\n",length);
+	printf("numBlocks %d\n",numBlocks);
+	printf("numWarps %d\n",numWarps);
+	*/
 	int* d_BlockCounts;
 	int* d_BlocksOffset;
 	unsigned int* d_Pred;
-	CUDASAFECALL (cudaMalloc(&d_BlockCounts,sizeof(int)*numBlocks));
-	CUDASAFECALL (cudaMalloc(&d_BlocksOffset,sizeof(int)*numBlocks));
-	CUDASAFECALL (cudaMalloc(&d_Pred,sizeof(unsigned int)*numBlocks*WARPS_PER_BLOCK));
+	CUDASAFECALL (cudaMalloc(&d_BlockCounts,sizeof(int)*numWarps));
+	CUDASAFECALL (cudaMalloc(&d_BlocksOffset,sizeof(int)*numWarps));
+	// Each iteration (32) has a pred.
+	CUDASAFECALL (cudaMalloc(&d_Pred,sizeof(unsigned int)*numWarps*THREADS_PER_WARP));
 	//CUDASAFECALL (cudaMalloc(&d_Pred,sizeof(unsigned int)*numWarps*WARPS_PER_BLOCK));
 	//CUDASAFECALL (cudaMalloc(&d_Pred,sizeof(unsigned int)*length));
 
 	thrust::device_ptr<int> thrustPrt_wCount(d_BlockCounts);
 	thrust::device_ptr<int> thrustPrt_wOffset(d_BlocksOffset);
-	thrust::device_ptr<unsigned int> thrustPrt_wPred(d_Pred);
 
 
 	//phase 1: count number of valid elements in each thread block
 	computeWarpCounts<<<numBlocks,blockSize>>>(d_input,length,d_Pred,d_BlockCounts,predicate);
 
 	//phase 2: compute exclusive prefix sum of valid block counts to get output offset for each thread block in grid
-	thrust::inclusive_scan(thrustPrt_wCount, thrustPrt_wCount + numBlocks, thrustPrt_wOffset);
+	thrust::inclusive_scan(thrustPrt_wCount, thrustPrt_wCount + numWarps, thrustPrt_wOffset);
 	
 	/*
+	thrust::device_ptr<unsigned int> thrustPrt_wPred(d_Pred);
 	thrust::host_vector<int> thrustVec_wCount(numWarps);
 	thrust::host_vector<int> thrustVec_wOffset(numWarps);
 	thrust::device_vector<int> thrustVec_wCount_d(thrustPrt_wCount, thrustPrt_wCount + numBlocks); 
@@ -307,7 +312,7 @@ int compactHybrid(T* d_input,T* d_output,int length, Predicate predicate, int bl
 	phase3<<<numBlocks,blockSize>>>(d_input,length,d_output,d_BlocksOffset,d_Pred);
 
 	// determine number of elements in the compacted list
-	int compact_length = thrustPrt_wOffset[numBlocks-1];
+	int compact_length = thrustPrt_wOffset[numWarps-1];
 	cudaFree(d_BlockCounts);
 	cudaFree(d_BlocksOffset);
 	cudaFree(d_Pred);

@@ -124,6 +124,7 @@ srand(time(0));
 	}//for elements
 	*/
 	// HYBRID
+	/*
 	for(int e=10;e<20;e++){
 	//for(int e=7;e<30;e++){
 		//blocksize from 32 to 1024
@@ -171,6 +172,7 @@ srand(time(0));
 		}//for blocksize
 	}//for elements
 	printf("ALL TEST PASSED");
+	*/
 	// HYBRID
 	for(int e=10;e<20;e++){
 	//for(int e=7;e<30;e++){
