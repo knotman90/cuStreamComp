@@ -264,11 +264,11 @@ int compact(T* d_input,T* d_output,int length, Predicate predicate, int blockSiz
 template <typename T,typename Predicate>
 int compactHybrid(T* d_input,T* d_output,int length, Predicate predicate, int blockSize){
 	int WARPS_PER_BLOCK = divup(blockSize,THREADS_PER_WARP);
-	printf("WPB %d\n",WARPS_PER_BLOCK);
+	//printf("WPB %d\n",WARPS_PER_BLOCK);
 	int numBlocks = divup(length,blockSize);
-	printf("numBlocks %d\n",numBlocks);
+	//printf("numBlocks %d\n",numBlocks);
 	int numWarps = numBlocks;
-	printf("numWarps %d\n",numBlocks);
+	//printf("numWarps %d\n",numBlocks);
 	int* d_BlockCounts;
 	int* d_BlocksOffset;
 	unsigned int* d_Pred;
@@ -281,25 +281,33 @@ int compactHybrid(T* d_input,T* d_output,int length, Predicate predicate, int bl
 	thrust::device_ptr<int> thrustPrt_wCount(d_BlockCounts);
 	thrust::device_ptr<int> thrustPrt_wOffset(d_BlocksOffset);
 	thrust::device_ptr<unsigned int> thrustPrt_wPred(d_Pred);
-	thrust::host_vector<int> thrustVec_wCount(numWarps);
+
 
 	//phase 1: count number of valid elements in each thread block
 	computeWarpCounts<<<numBlocks,blockSize>>>(d_input,length,d_Pred,d_BlockCounts,predicate);
-	thrust::device_vector<int> thrustVec_wCount_d(thrustPrt_wCount, thrustPrt_wCount + numBlocks); 
-	thrustVec_wCount=thrustVec_wCount_d;
+
+	//phase 2: compute exclusive prefix sum of valid block counts to get output offset for each thread block in grid
+	thrust::inclusive_scan(thrustPrt_wCount, thrustPrt_wCount + numBlocks, thrustPrt_wOffset);
+	
 	/*
+	thrust::host_vector<int> thrustVec_wCount(numWarps);
+	thrust::host_vector<int> thrustVec_wOffset(numWarps);
+	thrust::device_vector<int> thrustVec_wCount_d(thrustPrt_wCount, thrustPrt_wCount + numBlocks); 
+	thrust::device_vector<int> thrustVec_wOffset_d(thrustPrt_wOffset, thrustPrt_wOffset + numBlocks); 
+	thrustVec_wCount=thrustVec_wCount_d;
+	thrustVec_wOffset=thrustVec_wOffset_d;
 	for (auto a : thrustVec_wCount )
 		printf("%d ",a);
 	printf("\n");
+	for (auto a : thrustVec_wOffset )
+		printf("%d ",a);
+	printf("\n");
 	*/
-	//phase 2: compute exclusive prefix sum of valid block counts to get output offset for each thread block in grid
-	thrust::exclusive_scan(thrustPrt_wCount, thrustPrt_wCount + numBlocks, thrustPrt_wOffset);
-	
 	//phase 3: compute output offset for each thread in warp and each warp in thread block, then output valid elements
-	phase3<<<numBlocks,blockSize>>>(d_input,length,d_output,d_BlockCounts,d_Pred);
+	phase3<<<numBlocks,blockSize>>>(d_input,length,d_output,d_BlocksOffset,d_Pred);
 
 	// determine number of elements in the compacted list
-	int compact_length = thrustPrt_wOffset[numBlocks-1] + thrustPrt_wCount[numBlocks-1];
+	int compact_length = thrustPrt_wOffset[numBlocks-1];
 	cudaFree(d_BlockCounts);
 	cudaFree(d_BlocksOffset);
 	cudaFree(d_Pred);

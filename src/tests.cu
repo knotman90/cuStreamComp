@@ -22,7 +22,6 @@ struct int_predicate
 };
 #define randBound (50)//<100
 void initiData(int *h_data, uint NELEMENTS,uint &goodElements,bool randomOrStride){
-	printf("NELE %d\n",NELEMENTS);
 	ushort stride = 4;
 	for (int i = 0; i < NELEMENTS; ++i) {
 		if(randomOrStride)
@@ -33,6 +32,7 @@ void initiData(int *h_data, uint NELEMENTS,uint &goodElements,bool randomOrStrid
 			goodElements++;
 	}
 	/*
+	printf("NELE %u goodElements %u\n",NELEMENTS,goodElements);
 	int sum = 0;
 	int iter = 0;
 	for (int i = 0; i < NELEMENTS; ++i) {
@@ -56,8 +56,11 @@ void printData(int *h_data, uint NELEMENTS){
 
 
 void checkVector(int *h_data,uint NELEMENTS,uint NgoodElements){
-	//printf("Checking: %i, %i",NELEMENTS,NgoodElements);
+	//printf("Checking: %i, %i\n",NELEMENTS,NgoodElements);
 	int_predicate predicate;
+	//for(int i=0;i<NgoodElements;i++){
+		//printf("%d pred %d\n",h_data[i],predicate(h_data[i]));
+	//}
 	for(int i=0;i<NgoodElements;i++){
 		assert(predicate(h_data[i]));
 	}
@@ -121,7 +124,55 @@ srand(time(0));
 	}//for elements
 	*/
 	// HYBRID
-	for(int e=1;e<2;e++){
+	for(int e=10;e<20;e++){
+	//for(int e=7;e<30;e++){
+		//blocksize from 32 to 1024
+		// Warp method only handles blockSize 1024
+		for(int b=10;b<=10;b++){
+			printf("E %d\n",e);
+		//for(int b=5;b<=10;b++){
+			//NELEMENTS=1<<e;
+			// Warp method needs inputs of powers of 1024.
+			NELEMENTS=(1<<10)<<e;
+			NgoodElements=0;
+			blockSize=1<<b;
+			size_t datasize=sizeof(int)*NELEMENTS;
+			//host input/output data
+			h_data = (int*) malloc(datasize);
+			memset(h_data,0,datasize);
+			//device input data
+			cudaMalloc(&d_data,datasize);
+			//device output data
+			cudaMalloc(&d_output,datasize);
+
+			cudaMemset(d_output,0,datasize);
+			initiData(h_data,NELEMENTS,NgoodElements,false);
+
+			//printData(h_data,NELEMENTS);
+
+			cudaMemcpy(d_data,h_data,datasize,cudaMemcpyHostToDevice);
+
+			clock_t start = clock();
+			int compact_length = cuCompactor::compact<int>(d_data,d_output,NELEMENTS,int_predicate(),blockSize);
+			cudaDeviceSynchronize();
+			clock_t end = clock();
+			unsigned long millis = (end - start) * 1000 / CLOCKS_PER_SEC;
+			assert(compact_length==NgoodElements);
+			//copy back results to host
+			cudaMemcpy(h_data,d_output,datasize,cudaMemcpyDeviceToHost);
+			//printData(h_data,NELEMENTS);
+			checkVector(h_data,NELEMENTS,NgoodElements);
+			//device memory free
+			cudaFree(d_data);
+			cudaFree(d_output);
+			//host free  memory
+			free(h_data);
+			printf("B,%i,%i,%i\n",NELEMENTS,blockSize,millis);
+		}//for blocksize
+	}//for elements
+	printf("ALL TEST PASSED");
+	// HYBRID
+	for(int e=10;e<20;e++){
 	//for(int e=7;e<30;e++){
 		//blocksize from 32 to 1024
 		// Warp method only handles blockSize 1024
@@ -129,7 +180,7 @@ srand(time(0));
 		//for(int b=5;b<=10;b++){
 			//NELEMENTS=1<<e;
 			// Warp method needs inputs of powers of 1024.
-			NELEMENTS=e<<b;
+			NELEMENTS=(1<<10)<<e;
 			NgoodElements=0;
 			blockSize=1<<b;
 			size_t datasize=sizeof(int)*NELEMENTS;
@@ -153,7 +204,6 @@ srand(time(0));
 			cudaDeviceSynchronize();
 			clock_t end = clock();
 			unsigned long millis = (end - start) * 1000 / CLOCKS_PER_SEC;
-			printf("compact_length %d NgoodElements %d\n",compact_length,NgoodElements);
 			assert(compact_length==NgoodElements);
 			//copy back results to host
 			cudaMemcpy(h_data,d_output,datasize,cudaMemcpyDeviceToHost);
