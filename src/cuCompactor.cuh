@@ -132,6 +132,62 @@ __global__ void compactK(T* d_input,int length, T* d_output,int* d_BlocksOffset,
 	}
 }
 
+
+template <typename T,typename Predicate>
+__global__ void compactKKey(T* d_input,int length, T* d_output,int* d_BlocksOffset,Predicate predicate ){
+	int idx = threadIdx.x + blockIdx.x*blockDim.x;
+	extern __shared__ int warpTotals[];
+	if(idx < length){
+		int pred = predicate(d_input[idx]);
+		int w_i = threadIdx.x/warpSize; //warp index
+		int w_l = idx % warpSize;//thread index within a warp
+
+		// compute exclusive prefix sum based on predicate validity to get output offset for thread in warp
+		int t_m = FULL_MASK >> (warpSize-w_l); //thread mask
+		#if (CUDART_VERSION < 9000)
+		int b   = __ballot(pred) & t_m; //ballot result = number whose ith bit is one if the ith's thread pred is true masked up to the current index in warp
+		#else
+		int b	= __ballot_sync(FULL_MASK,pred) & t_m;
+		#endif
+		int t_u	= __popc(b); // popc count the number of bit one. simply count the number predicated true BEFORE MY INDEX
+
+		// last thread in warp computes total valid counts for the warp
+		if(w_l==warpSize-1){
+			warpTotals[w_i]=t_u+pred;
+		}
+
+		// need all warps in thread block to fill in warpTotals before proceeding
+		__syncthreads();
+
+		// first numWarps threads in first warp compute exclusive prefix sum to get output offset for each warp in thread block
+		int numWarps = blockDim.x/warpSize;
+		unsigned int numWarpsMask = FULL_MASK >> (warpSize-numWarps);
+		if(w_i==0 && w_l<numWarps){
+			int w_i_u=0;
+			for(int j=0;j<=5;j++){ // must include j=5 in loop in case any elements of warpTotals are identically equal to 32
+				#if (CUDART_VERSION < 9000)
+		                int b_j =__ballot( warpTotals[w_l] & pow2i(j) ); //# of the ones in the j'th digit of the warp offsets
+				#else
+				int b_j =__ballot_sync(numWarpsMask, warpTotals[w_l] & pow2i(j) );
+				#endif
+				w_i_u += (__popc(b_j & t_m)  ) << j;
+				//printf("indice %i t_m=%i,j=%i,b_j=%i,w_i_u=%i\n",w_l,t_m,j,b_j,w_i_u);
+			}
+			warpTotals[w_l]=w_i_u;
+		}
+
+		// need all warps in thread block to wait until prefix sum is calculated in warpTotals
+		__syncthreads(); 
+
+		// if valid element, place the element in proper destination address based on thread offset in warp, warp offset in block, and block offset in grid
+		if(pred){
+			d_output[t_u+warpTotals[w_i]+d_BlocksOffset[blockIdx.x]]= idx;
+		}
+
+
+	}
+}
+
 template <typename T>
 __global__ void phase3Key(T* d_input,const int length, T* d_output,int* d_BlockCounts,unsigned int *pred){
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -250,7 +306,9 @@ int compact(T* d_input,T* d_output,int length, Predicate predicate, int blockSiz
 	thrust::exclusive_scan(thrustPrt_bCount, thrustPrt_bCount + numBlocks, thrustPrt_bOffset);
 	
 	//phase 3: compute output offset for each thread in warp and each warp in thread block, then output valid elements
-	compactK<<<numBlocks,blockSize,sizeof(int)*(blockSize/warpSize)>>>(d_input,length,d_output,d_BlocksOffset,predicate);
+	//compactK<<<numBlocks,blockSize,sizeof(int)*(blockSize/warpSize)>>>(d_input,length,d_output,d_BlocksOffset,predicate);
+	compactKKey<<<numBlocks,blockSize,sizeof(int)*(blockSize/warpSize)>>>(d_input,length,d_output,d_BlocksOffset,predicate);
+	
 	cudaDeviceSynchronize();
 	clock_t end = clock();
 	unsigned long millis = (end - start) * 1000 / CLOCKS_PER_SEC;
