@@ -10,8 +10,11 @@
 #define CUCOMPACTOR_H_
 
 #include <thrust/scan.h>
+#include <thrust/host_vector.h>
+
 #include <thrust/device_vector.h>
 #include "cuda_error_check.cu"
+#define THREADS_PER_WARP 32
 
 namespace cuCompactor {
 
@@ -38,6 +41,40 @@ __global__ void computeBlockCounts(T* d_input,int length,int*d_BlockCounts,Predi
 	}
 }
 
+#define WARP_SZ 32
+__device__ inline int lane_id(void) { return threadIdx.x % WARP_SZ; }
+template <typename T,typename Predicate>
+__global__ void computeWarpCounts(T* d_input,int length,unsigned int *pred,int*d_BlockCounts,Predicate predicate){
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= (length >> 5) ) // divide by 32
+        return;
+
+    int lnid = lane_id();
+    int warp_id = tid >> 5; // global warp number
+    unsigned int mask;
+    int cnt;
+    for(int i = 0; i < 32 ; i++) {
+        mask = __ballot(predicate(d_input[(warp_id<<10)+(i<<5)+lnid]));
+        //mask = __ballot_sync(0xFFFFFFFF,predicate(d_input[(warp_id<<10)+(i<<5)+lnid]));
+
+        if (lnid == 0){
+            pred[(warp_id<<5)+i] = mask;
+			//printf("pred[%d]=%u\n",(warp_id<<5)+i,mask);
+		}
+		if (lnid == i){	
+		    cnt = __popc(mask);
+			//printf("lnid %d cnt %d\n",lnid,cnt);
+		}
+    }
+    // para reduction to a sum of 1024 elements
+    #pragma unroll
+    for (int offset = 16 ; offset > 0; offset >>= 1)
+        cnt += __shfl_down(cnt, offset);
+        //cnt += __shfl_down_sync(0xFFFFFFFF,cnt, offset);
+		
+    if (lnid == 0)
+        d_BlockCounts[warp_id] = cnt; // store the sum of the group
+}
 
 
 template <typename T,typename Predicate>
@@ -95,6 +132,94 @@ __global__ void compactK(T* d_input,int length, T* d_output,int* d_BlocksOffset,
 	}
 }
 
+
+/* PHASE3: produce final result array */
+template <typename T>
+__global__ void phase3Key(T* d_input,const int length, T* d_output,int* d_BlockCounts,unsigned int *pred){
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= (length >> 5) ) // divide by 32
+        return;
+
+    int lnid = lane_id();
+    int warp_id = tid >> 5; // global warp number
+
+    unsigned int predmask;
+    int cnt;
+
+    for(int i = 0; i < 32 ; i++) {
+        if (lnid == i) {
+            // each thr take turns to load its local var (i.e regs)
+            predmask = pred[(warp_id<<5)+i];
+            cnt = __popc(predmask);
+        }
+    }
+    // parallel prefix sum
+
+    #pragma unroll
+    for (int offset=1; offset<32; offset<<=1) {
+        int n = __shfl_up(cnt, offset) ;
+        if (lnid >= offset) cnt += n;
+    }
+
+    int global_index =0 ;
+    if (warp_id > 0)
+        global_index = d_BlockCounts[warp_id -1];
+
+    for(int i = 0; i < 32 ; i++) {
+        int mask = __shfl(predmask, i); // broadcast from thr i
+        int subgroup_index = 0;
+        if (i > 0)
+        subgroup_index = __shfl(cnt, i-1); // broadcast from thr i-1 if i>0
+
+        if (mask & (1 << lnid ) ) // each thr extracts its pred bit
+            d_output[global_index + subgroup_index +
+        __popc(mask & ((1 << lnid) - 1))] = (warp_id<<10)+ (i<<5) + lnid ;
+    }
+}
+
+template <typename T>
+__global__ void phase3(T* d_input,const int length, T* d_output,int* d_BlockCounts,unsigned int *pred){
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= (length >> 5) ) // divide by 32
+        return;
+
+    int lnid = lane_id();
+    int warp_id = tid >> 5; // global warp number
+
+    unsigned int predmask;
+    int cnt;
+
+    for(int i = 0; i < 32 ; i++) {
+        if (lnid == i) {
+            // each thr take turns to load its local var (i.e regs)
+            predmask = pred[(warp_id<<5)+i];
+            cnt = __popc(predmask);
+        }
+    }
+    // parallel prefix sum
+
+    #pragma unroll
+    for (int offset=1; offset<32; offset<<=1) {
+        int n = __shfl_up(cnt, offset) ;
+        if (lnid >= offset) cnt += n;
+    }
+
+    int global_index =0 ;
+    if (warp_id > 0)
+        global_index = d_BlockCounts[warp_id -1];
+
+    for(int i = 0; i < 32 ; i++) {
+        int mask = __shfl(predmask, i); // broadcast from thr i
+        int subgroup_index = 0;
+        if (i > 0)
+        subgroup_index = __shfl(cnt, i-1); // broadcast from thr i-1 if i>0
+
+        if (mask & (1 << lnid ) ) // each thr extracts its pred bit
+            d_output[global_index + subgroup_index +
+        __popc(mask & ((1 << lnid) - 1))] = d_input[(warp_id<<10)+ (i<<5) + lnid];
+    }
+}
+
 template <class T>
 __global__  void printArray_GPU(T* hd_data, int size,int newline){
 	int w=0;
@@ -136,6 +261,51 @@ int compact(T* d_input,T* d_output,int length, Predicate predicate, int blockSiz
 	return compact_length;
 }
 
+template <typename T,typename Predicate>
+int compactHybrid(T* d_input,T* d_output,int length, Predicate predicate, int blockSize){
+	int WARPS_PER_BLOCK = divup(blockSize,THREADS_PER_WARP);
+	printf("WPB %d\n",WARPS_PER_BLOCK);
+	int numBlocks = divup(length,blockSize);
+	printf("numBlocks %d\n",numBlocks);
+	int numWarps = numBlocks;
+	printf("numWarps %d\n",numBlocks);
+	int* d_BlockCounts;
+	int* d_BlocksOffset;
+	unsigned int* d_Pred;
+	CUDASAFECALL (cudaMalloc(&d_BlockCounts,sizeof(int)*numBlocks));
+	CUDASAFECALL (cudaMalloc(&d_BlocksOffset,sizeof(int)*numBlocks));
+	CUDASAFECALL (cudaMalloc(&d_Pred,sizeof(unsigned int)*numBlocks*WARPS_PER_BLOCK));
+	//CUDASAFECALL (cudaMalloc(&d_Pred,sizeof(unsigned int)*numWarps*WARPS_PER_BLOCK));
+	//CUDASAFECALL (cudaMalloc(&d_Pred,sizeof(unsigned int)*length));
+
+	thrust::device_ptr<int> thrustPrt_wCount(d_BlockCounts);
+	thrust::device_ptr<int> thrustPrt_wOffset(d_BlocksOffset);
+	thrust::device_ptr<unsigned int> thrustPrt_wPred(d_Pred);
+	thrust::host_vector<int> thrustVec_wCount(numWarps);
+
+	//phase 1: count number of valid elements in each thread block
+	computeWarpCounts<<<numBlocks,blockSize>>>(d_input,length,d_Pred,d_BlockCounts,predicate);
+	thrust::device_vector<int> thrustVec_wCount_d(thrustPrt_wCount, thrustPrt_wCount + numBlocks); 
+	thrustVec_wCount=thrustVec_wCount_d;
+	/*
+	for (auto a : thrustVec_wCount )
+		printf("%d ",a);
+	printf("\n");
+	*/
+	//phase 2: compute exclusive prefix sum of valid block counts to get output offset for each thread block in grid
+	thrust::exclusive_scan(thrustPrt_wCount, thrustPrt_wCount + numBlocks, thrustPrt_wOffset);
+	
+	//phase 3: compute output offset for each thread in warp and each warp in thread block, then output valid elements
+	phase3<<<numBlocks,blockSize>>>(d_input,length,d_output,d_BlockCounts,d_Pred);
+
+	// determine number of elements in the compacted list
+	int compact_length = thrustPrt_wOffset[numBlocks-1] + thrustPrt_wCount[numBlocks-1];
+	cudaFree(d_BlockCounts);
+	cudaFree(d_BlocksOffset);
+	cudaFree(d_Pred);
+
+	return compact_length;
+}
 
 
 } /* namespace cuCompactor */

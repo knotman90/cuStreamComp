@@ -5,6 +5,12 @@
 #include <stdlib.h>
 using namespace std;
 
+#define MAX_THREADS_PER_GRID (2**31)
+
+#define THREADS_PER_WARP 32
+//#define THREADS_PER_BLOCK 1024
+//#define WARPS_PER_BLOCK (THREADS_PER_BLOCK/THREADS_PER_WARP)
+//#define I_SIZE ((3/2)*THREADS_PER_BLOCK)
 
 struct int_predicate
 {
@@ -16,7 +22,7 @@ struct int_predicate
 };
 #define randBound (50)//<100
 void initiData(int *h_data, uint NELEMENTS,uint &goodElements,bool randomOrStride){
-
+	printf("NELE %d\n",NELEMENTS);
 	ushort stride = 4;
 	for (int i = 0; i < NELEMENTS; ++i) {
 		if(randomOrStride)
@@ -26,6 +32,18 @@ void initiData(int *h_data, uint NELEMENTS,uint &goodElements,bool randomOrStrid
 		if(h_data[i])
 			goodElements++;
 	}
+	/*
+	int sum = 0;
+	int iter = 0;
+	for (int i = 0; i < NELEMENTS; ++i) {
+		sum += h_data[i];
+		if (i%32 == 0 && i > 0){
+			printf("iter %d %d\n",iter++,sum);
+			sum = 0;
+		}
+	}
+	printf("\n");
+	*/
 }
 
 
@@ -58,12 +76,11 @@ uint blockSize=8;
 int main(){
 srand(time(0));
 	int *d_data, *d_output, *h_data;
-
 	//data elements from 2^5 to 2^29
+	/*
 	for(int e=7;e<30;e++){
 		//blocksize from 32 to 1024
 		for(int b=5;b<=10;b++){
-
 			NELEMENTS=1<<e;
 			NgoodElements=0;
 			blockSize=1<<b;
@@ -99,7 +116,55 @@ srand(time(0));
 			cudaFree(d_output);
 			//host free  memory
 			free(h_data);
-			printf("(%i,%i,%i)\n",NELEMENTS,blockSize,millis);
+			printf("B,%i,%i,%i\n",NELEMENTS,blockSize,millis);
+		}//for blocksize
+	}//for elements
+	*/
+	// HYBRID
+	for(int e=1;e<2;e++){
+	//for(int e=7;e<30;e++){
+		//blocksize from 32 to 1024
+		// Warp method only handles blockSize 1024
+		for(int b=10;b<=10;b++){
+		//for(int b=5;b<=10;b++){
+			//NELEMENTS=1<<e;
+			// Warp method needs inputs of powers of 1024.
+			NELEMENTS=e<<b;
+			NgoodElements=0;
+			blockSize=1<<b;
+			size_t datasize=sizeof(int)*NELEMENTS;
+			//host input/output data
+			h_data = (int*) malloc(datasize);
+			memset(h_data,0,datasize);
+			//device input data
+			cudaMalloc(&d_data,datasize);
+			//device output data
+			cudaMalloc(&d_output,datasize);
+
+			cudaMemset(d_output,0,datasize);
+			initiData(h_data,NELEMENTS,NgoodElements,false);
+
+			//printData(h_data,NELEMENTS);
+
+			cudaMemcpy(d_data,h_data,datasize,cudaMemcpyHostToDevice);
+
+			clock_t start = clock();
+			int compact_length = cuCompactor::compactHybrid<int>(d_data,d_output,NELEMENTS,int_predicate(),blockSize);
+			cudaDeviceSynchronize();
+			clock_t end = clock();
+			unsigned long millis = (end - start) * 1000 / CLOCKS_PER_SEC;
+			printf("compact_length %d NgoodElements %d\n",compact_length,NgoodElements);
+			assert(compact_length==NgoodElements);
+			//copy back results to host
+			cudaMemcpy(h_data,d_output,datasize,cudaMemcpyDeviceToHost);
+			//printData(h_data,NELEMENTS);
+			checkVector(h_data,NELEMENTS,NgoodElements);
+			//device memory free
+			cudaFree(d_data);
+			cudaFree(d_output);
+			//host free  memory
+			free(h_data);
+			printf("H,%i,%i,%i\n",NELEMENTS,blockSize,millis);
 		}//for blocksize
 	}//for elements
 	printf("ALL TEST PASSED");
