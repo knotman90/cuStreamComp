@@ -348,14 +348,13 @@ int compactThrust(T* d_input,T* d_output,int length, Predicate predicate){
                                                 thrustVec_input.begin(),
                                                 thrustVec_output.begin(),
                                                 predicate);
-	int compact_length = (indices_end-thrustVec_output.begin());
-	thrust::transform(thrustVec_output.begin(), thrustVec_output.begin() + compact_length, thrustVec_output.begin(), predicate); // in-place transformation
 	cudaDeviceSynchronize();
 	clock_t end = clock();
 	unsigned long millis = (end - start) * 1000 / CLOCKS_PER_SEC;
 	// end time here
 	printf("T,%i,%i\n",length,millis);
 	// determine number of elements in the compacted list
+	int compact_length = (indices_end-thrustVec_output.begin());
 
 	return compact_length;
 }
