@@ -82,12 +82,12 @@ srand(time(0));
 	//data elements from 2^5 to 2^29
 
 	// HYBRID
-	for(int e=10;e<22;e++){
+	for(int e=10;e<21;e++){
 	//for(int e=7;e<30;e++){
 		//blocksize from 32 to 1024
 		// Warp method only handles blockSize 1024
-		for(int b=10;b<=10;b++){
-		//for(int b=5;b<=10;b++){
+		//for(int b=10;b<=10;b++){
+		for(int b=5;b<=10;b++){
 			//NELEMENTS=1<<e;
 			// Warp method needs inputs of powers of 1024.
 			NELEMENTS=(1<<10)<<e;
