@@ -298,8 +298,11 @@ int compact(T* d_input,T* d_output,int length, Predicate predicate, int blockSiz
 	thrust::device_ptr<int> thrustPrt_bOffset(d_BlocksOffset);
 
 	//phase 1: count number of valid elements in each thread block
-	cudaDeviceSynchronize();
-	clock_t start = clock();
+	cudaEvent_t start, stop;
+	float millis;
+	cudaEventCreate(&start);
+	cudaEventCreate(&stop);
+	cudaEventRecord(start);
 	computeBlockCounts<<<numBlocks,blockSize>>>(d_input,length,d_BlocksCount,predicate);
 	
 	//phase 2: compute exclusive prefix sum of valid block counts to get output offset for each thread block in grid
@@ -309,11 +312,11 @@ int compact(T* d_input,T* d_output,int length, Predicate predicate, int blockSiz
 	//compactK<<<numBlocks,blockSize,sizeof(int)*(blockSize/warpSize)>>>(d_input,length,d_output,d_BlocksOffset,predicate);
 	compactKKey<<<numBlocks,blockSize,sizeof(int)*(blockSize/warpSize)>>>(d_input,length,d_output,d_BlocksOffset,predicate);
 	
-	cudaDeviceSynchronize();
-	clock_t end = clock();
-	unsigned long millis = (end - start) * 1000 / CLOCKS_PER_SEC;
+	cudaEventRecord(stop);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&millis,start,stop);
 	// end time here
-	printf("B,%i,%i,%i\n",length,blockSize,millis);
+	printf("B,%i,%i,%f\n",length,blockSize,millis);
 	// determine number of elements in the compacted list
 	int compact_length = thrustPrt_bOffset[numBlocks-1] + thrustPrt_bCount[numBlocks-1];
 
@@ -349,8 +352,11 @@ int compactHybrid(T* d_input,T* d_output,int length, Predicate predicate, int bl
 	thrust::device_ptr<int> thrustPrt_wOffset(d_BlocksOffset);
 
 	// Start time here
-	cudaDeviceSynchronize();
-	clock_t start = clock();
+	cudaEvent_t start, stop;
+	float millis;
+	cudaEventCreate(&start);
+	cudaEventCreate(&stop);
+	cudaEventRecord(start);
 	//phase 1: count number of valid elements in each thread block
 	computeWarpCounts<<<numBlocks,blockSize>>>(d_input,length,d_Pred,d_BlockCounts,predicate);
 
@@ -375,11 +381,11 @@ int compactHybrid(T* d_input,T* d_output,int length, Predicate predicate, int bl
 	//phase 3: compute output offset for each thread in warp and each warp in thread block, then output valid elements
 	phase3Key<<<numBlocks,blockSize>>>(d_input,length,d_output,d_BlocksOffset,d_Pred);
 	//phase3<<<numBlocks,blockSize>>>(d_input,length,d_output,d_BlocksOffset,d_Pred);
-	cudaDeviceSynchronize();
-	clock_t end = clock();
-	unsigned long millis = (end - start) * 1000 / CLOCKS_PER_SEC;
+	cudaEventRecord(stop);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&millis,start,stop);
 	// end time here
-	printf("H,%i,%i,%i\n",length,blockSize,millis);
+	printf("H,%i,%i,%f\n",length,blockSize,millis);
 	// determine number of elements in the compacted list
 	int compact_length = thrustPrt_wOffset[numWarps-1];
 	cudaFree(d_BlockCounts);
@@ -399,18 +405,21 @@ int compactThrust(T* d_input,T* d_output,int length, Predicate predicate){
 	thrust::device_vector<int> thrustVec_output(thrustPrt_output, thrustPrt_output + length);
     typedef thrust::device_vector<int>::iterator IndexIterator;
 	// Start time here
-	cudaDeviceSynchronize();
-	clock_t start = clock();
+	cudaEvent_t start, stop;
+	float millis;
+	cudaEventCreate(&start);
+	cudaEventCreate(&stop);
+	cudaEventRecord(start);
     IndexIterator indices_end = thrust::copy_if(thrust::make_counting_iterator(0),
                                                 thrust::make_counting_iterator(length),
                                                 thrustVec_input.begin(),
                                                 thrustVec_output.begin(),
                                                 predicate);
-	cudaDeviceSynchronize();
-	clock_t end = clock();
-	unsigned long millis = (end - start) * 1000 / CLOCKS_PER_SEC;
+	cudaEventRecord(stop);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&millis,start,stop);
 	// end time here
-	printf("T,%i,%i\n",length,millis);
+	printf("T,%i,%f\n",length,millis);
 	// determine number of elements in the compacted list
 	int compact_length = (indices_end-thrustVec_output.begin());
 
