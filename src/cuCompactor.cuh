@@ -407,21 +407,27 @@ int compactThrust(T* d_input,T* d_output,int length, Predicate predicate){
 	// Start time here
 	cudaEvent_t start, stop;
 	float millis;
-	cudaEventCreate(&start);
-	cudaEventCreate(&stop);
-	cudaEventRecord(start);
-    IndexIterator indices_end = thrust::copy_if(thrust::make_counting_iterator(0),
-                                                thrust::make_counting_iterator(length),
-                                                thrustVec_input.begin(),
-                                                thrustVec_output.begin(),
-                                                predicate);
-	cudaEventRecord(stop);
-	cudaEventSynchronize(stop);
-	cudaEventElapsedTime(&millis,start,stop);
-	// end time here
-	printf("T,%i,%f\n",length,millis);
-	// determine number of elements in the compacted list
-	int compact_length = (indices_end-thrustVec_output.begin());
+	int compact_length = 0;
+	try {
+		cudaEventCreate(&start);
+		cudaEventCreate(&stop);
+		cudaEventRecord(start);
+		IndexIterator indices_end = thrust::copy_if(thrust::make_counting_iterator(0),
+													thrust::make_counting_iterator(length),
+													thrustVec_input.begin(),
+													thrustVec_output.begin(),
+													predicate);
+		cudaEventRecord(stop);
+		cudaEventSynchronize(stop);
+		cudaEventElapsedTime(&millis,start,stop);
+		// end time here
+		printf("T,%i,%f\n",length,millis);
+		// determine number of elements in the compacted list
+		compact_length = (indices_end-thrustVec_output.begin());
+	} catch (const char* msg) {
+		std::cerr << msg << std::endl;
+	}
+
 
 	return compact_length;
 }
